@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>fretlearner</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header with current learning info -->
+        <header class="app-header">
+            <h1>fretlearner</h1>
+            <div class="learning-context">
+                <div class="context-item">
+                    <span class="label">Mode:</span>
+                    <span id="currentMode" class="value">-</span>
+                </div>
+                <div class="context-item">
+                    <span class="label">String:</span>
+                    <span id="currentString" class="value">-</span>
+                </div>
+                <div class="context-item">
+                    <span class="label">Progress:</span>
+                    <span id="progressInfo" class="value">-</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main content area -->
+        <main class="main-content">
+            <!-- Left panel: Fretboard and flashcard -->
+            <div class="left-panel">
+                <!-- Flashcard area -->
+                <div class="flashcard-container">
+                    <div id="flashcard" class="flashcard">
+                        <div class="flashcard-prompt">Play this note:</div>
+                        <div id="targetNote" class="target-note">E</div>
+                        <div id="targetString" class="target-string"></div>
+                        <div id="feedbackMessage" class="feedback-message"></div>
+                    </div>
+                </div>
+
+                <!-- Fretboard visualization -->
+                <div class="fretboard-container">
+                    <canvas id="fretboard" width="1000" height="200"></canvas>
+                </div>
+
+                <!-- Audio detection status -->
+                <div class="audio-status">
+                    <div class="status-row">
+                        <div class="detected-note">
+                            <span class="label">Detected:</span>
+                            <span id="detectedNote" class="note-display">-</span>
+                        </div>
+                        <div class="frequency-info">
+                            <span id="frequencyDisplay">-</span>
+                        </div>
+                    </div>
+                    <div class="volume-meter">
+                        <div id="volumeBar" class="volume-bar"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right panel: Controls and settings -->
+            <div class="right-panel">
+                <!-- Audio setup -->
+                <div class="panel-section">
+                    <h3>Audio Input</h3>
+                    <select id="audioInput" class="full-width">
+                        <option value="">Select Audio Input...</option>
+                    </select>
+                    <button id="startAudioBtn" class="btn btn-primary full-width">Start Audio Detection</button>
+                    <button id="stopAudioBtn" class="btn btn-danger full-width" style="display: none;">Stop Audio</button>
+                </div>
+
+                <!-- Testing Mode (no audio needed) -->
+                <div class="panel-section" id="testingModeSection">
+                    <h3>Testing Mode</h3>
+                    <div class="setting-group">
+                        <label>
+                            <input type="checkbox" id="testingModeToggle">
+                            Enable Testing Mode (no audio)
+                        </label>
+                    </div>
+                    <div id="testingControls" style="display: none;">
+                        <div class="note-buttons">
+                            <button class="btn-note" data-note="C">C</button>
+                            <button class="btn-note" data-note="C#">C#/Db</button>
+                            <button class="btn-note" data-note="D">D</button>
+                            <button class="btn-note" data-note="D#">D#/Eb</button>
+                            <button class="btn-note" data-note="E">E</button>
+                            <button class="btn-note" data-note="F">F</button>
+                            <button class="btn-note" data-note="F#">F#/Gb</button>
+                            <button class="btn-note" data-note="G">G</button>
+                            <button class="btn-note" data-note="G#">G#/Ab</button>
+                            <button class="btn-note" data-note="A">A</button>
+                            <button class="btn-note" data-note="A#">A#/Bb</button>
+                            <button class="btn-note" data-note="B">B</button>
+                        </div>
+                        <p class="hint">Buttons work for both sharps and flats!<br>Keyboard: C, D, E, F, G, A, B</p>
+                    </div>
+                </div>
+
+                <!-- Learning controls -->
+                <div class="panel-section">
+                    <h3>Learning Session</h3>
+                    <button id="startLearningBtn" class="btn btn-success full-width" disabled>Start Learning</button>
+                    <button id="pauseLearningBtn" class="btn btn-warning full-width" style="display: none;">Pause</button>
+                </div>
+
+                <!-- Settings -->
+                <div class="panel-section">
+                    <h3>Settings</h3>
+                    <div class="setting-group">
+                        <label>
+                            <input type="checkbox" id="focusModeToggle">
+                            Focus Mode (large flashcard, hide fretboard)
+                        </label>
+                    </div>
+                    <div class="setting-group">
+                        <label for="noteRepetitions">Repeat each note:</label>
+                        <input type="number" id="noteRepetitions" min="1" max="10" value="1">
+                    </div>
+                    <div class="setting-group">
+                        <label for="repeatCount">Full rounds:</label>
+                        <input type="number" id="repeatCount" min="1" max="10" value="2">
+                    </div>
+                    <div class="setting-group">
+                        <label for="randomRounds">Random rounds:</label>
+                        <input type="number" id="randomRounds" min="1" max="5" value="1">
+                    </div>
+                </div>
+
+                <!-- Progress tracking -->
+                <div class="panel-section">
+                    <h3>Progress</h3>
+                    <div class="progress-stats">
+                        <div class="stat-item">
+                            <div class="stat-label">Current Round:</div>
+                            <div id="currentRound" class="stat-value">-</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Notes Learned:</div>
+                            <div id="notesLearned" class="stat-value">0</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Accuracy:</div>
+                            <div id="accuracy" class="stat-value">-</div>
+                        </div>
+                    </div>
+                    <div class="progress-bar-container">
+                        <div id="progressBar" class="progress-bar"></div>
+                    </div>
+                </div>
+
+                <!-- Reset controls -->
+                <div class="panel-section">
+                    <h3>Reset</h3>
+                    <button id="resetLevelBtn" class="btn btn-secondary full-width">Reset Current Level</button>
+                    <button id="resetAllBtn" class="btn btn-danger full-width">Reset All Progress</button>
+                </div>
+
+                <!-- Mode selection -->
+                <div class="panel-section">
+                    <h3>Learning Mode</h3>
+                    <select id="modeSelect" class="full-width">
+                        <option value="naturals">Natural Notes (E, A, D, etc.)</option>
+                        <option value="sharps">Sharps (F#, C#, etc.)</option>
+                        <option value="flats">Flats (Bb, Eb, etc.)</option>
+                        <option value="anywhere">Notes Anywhere</option>
+                    </select>
+                </div>
+            </div>
+        </main>
+
+        <!-- Welcome/Setup overlay -->
+        <div id="welcomeOverlay" class="overlay">
+            <div class="overlay-content">
+                <h2>Welcome to fretlearner!</h2>
+                <p>This app will help you master the guitar fretboard using audio detection and flashcards.</p>
+                <h3>How it works:</h3>
+                <ol>
+                    <li>Select your audio input device (guitar interface) OR enable Testing Mode</li>
+                    <li>Start audio detection (or skip if using Testing Mode)</li>
+                    <li>Begin your learning session</li>
+                    <li>Play the note shown on the fretboard (or click/type it in Testing Mode)</li>
+                    <li>The app will detect your playing and move to the next note</li>
+                </ol>
+                <p class="note"><strong>Learning progression:</strong><br>
+                   Naturals → Sharps → Flats → Notes Anywhere<br>
+                   Each string is learned individually with configurable repetitions
+                </p>
+                <p class="note"><strong>Testing Mode:</strong><br>
+                   Enable "Testing Mode" to try the app without audio input!<br>
+                   Use the on-screen buttons or keyboard shortcuts to simulate notes.
+                </p>
+                <button id="closeWelcomeBtn" class="btn btn-primary">Get Started</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="audio-detector.js"></script>
+    <script src="fretboard.js"></script>
+    <script src="learning-engine.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
