@@ -134,6 +134,14 @@ class Fretlearner {
             }
         });
 
+        // Debug mode shortcut (Ctrl+Shift+D)
+        document.addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.shiftKey && e.key === 'D') {
+                e.preventDefault();
+                this.toggleDebugMode();
+            }
+        });
+
         // Keyboard shortcuts for testing
         document.addEventListener('keydown', (e) => {
             if (!this.isTestingMode || !this.isLearningActive) return;
@@ -501,6 +509,17 @@ class Fretlearner {
         }, 500);
     }
 
+    toggleDebugMode() {
+        if (!this.audioDetector.debugMode) {
+            this.audioDetector.enableConsoleDebug();
+            console.log('%cDEBUG MODE ENABLED (Ctrl+Shift+D to toggle)', 'color: #00ff00; font-weight: bold;');
+        } else {
+            this.audioDetector.setDebugMode(false);
+            this.audioDetector.onDebugData = null;
+            console.log('%cDEBUG MODE DISABLED', 'color: #ff0000; font-weight: bold;');
+        }
+    }
+
     capitalizeFirst(str) {
         return str.charAt(0).toUpperCase() + str.slice(1);
     }
@@ -509,4 +528,8 @@ class Fretlearner {
 // Initialize app when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
     window.app = new Fretlearner();
+
+    // Make debug functions available in console
+    window.debugAudio = () => window.app.toggleDebugMode();
+    console.log('Tip: Press Ctrl+Shift+D or type debugAudio() to toggle debug mode');
 });
