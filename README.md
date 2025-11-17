@@ -5,8 +5,12 @@ An interactive Electron app for learning the guitar fretboard using audio detect
 ## Features
 
 - **Advanced Audio Detection**:
-  - Real-time pitch detection using autocorrelation algorithm
-  - Volume threshold filtering for accurate note recognition
+  - Real-time pitch detection using YIN algorithm (industry-standard)
+  - Mathematical note segmentation with ADSR envelope tracking
+  - Spectral flux onset detection for fast and slow attacks
+  - Harmonic validation to reject noise and octave errors
+  - Pitch stability checking prevents false detections
+  - Automatic silence detection for smooth note transitions
 - **Visual Fretboard**: Interactive fretboard showing note positions and string information
 - **Progressive Learning**: Master notes step-by-step
   - Natural notes (C, D, E, F, G, A, B)
@@ -20,6 +24,7 @@ An interactive Electron app for learning the guitar fretboard using audio detect
   - **Focus Mode**: Enlarged flashcard with hidden fretboard for distraction-free practice
 - **Smart Progression**:
   - Visual feedback with "Good job!" screen between repetitions
+  - Intelligent release detection - waits for note to decay before advancing
   - String information displayed on flashcard
 - **Progress Tracking**: Automatically saves progress and resumes where you left off
 - **String-by-String Learning**: Master each string individually before moving on
@@ -32,11 +37,12 @@ An interactive Electron app for learning the guitar fretboard using audio detect
 3. Begin your learning session
 4. Play the note shown on the flashcard with string information (e.g., "E on Low E (6th)")
 5. The app detects your playing and shows "Good job!" when correct
-6. Each note can be repeated multiple times based on your "Repeat each note" setting
-7. Complete multiple rounds through all notes based on your "Full rounds" setting
-8. After completing all rounds, practice with randomized notes in "Random rounds"
-9. Progress through all 6 strings (Low E → A → D → G → B → High E), then move to the next mode
-10. Your progress is automatically saved and can be resumed anytime
+6. Release the note - the app waits for the sound to decay before advancing
+7. Each note can be repeated multiple times based on your "Repeat each note" setting
+8. Complete multiple rounds through all notes based on your "Full rounds" setting
+9. After completing all rounds, practice with randomized notes in "Random rounds"
+10. Progress through all 6 strings (Low E → A → D → G → B → High E), then move to the next mode
+11. Your progress is automatically saved and can be resumed anytime
 
 ## Installation
 
@@ -102,6 +108,8 @@ npm run build
 4. When detected correctly:
    - You'll see a green checkmark (✓) and "Good job!" message
    - The fretboard highlight clears
+   - After 2 seconds, if you're still holding the note, you'll see "Release the note..."
+   - The app automatically advances when it detects silence
 5. For incorrect attempts, you'll see feedback showing which note you played
 6. With "Repeat each note" > 1, you'll see repetition count (e.g., "Rep 1/3")
 
@@ -149,9 +157,50 @@ All progress data is stored in a single localStorage key called `fretlearner_sta
 
 ### Audio Detection
 
-- Uses Web Audio API with autocorrelation algorithm for pitch detection
-- Optimized for guitar frequency range (50-2000 Hz)
+The application uses advanced Music Information Retrieval (MIR) techniques for robust note detection:
+
+**Pitch Detection - YIN Algorithm**
+- Industry-standard YIN algorithm (Cheveigne & Kawahara, 2002)
+- Uses difference function instead of autocorrelation for better accuracy
+- Cumulative Mean Normalized Difference Function (CMNDF) for periodicity detection
+- Parabolic interpolation for sub-sample frequency accuracy
+- Optimized for guitar frequency range (82-2000 Hz, E2-B6)
+
+**Note Segmentation - ADSR State Machine**
+- Tracks note lifecycle: SILENCE → ATTACK → SUSTAIN → RELEASE → SILENCE
+- Exponential smoothing for stable amplitude envelope tracking
+- Hysteresis prevents rapid state oscillation and false triggers
+- Minimum note duration filtering
+
+**Onset Detection - Spectral Flux**
+- Measures changes in magnitude spectrum between frames
+- L2 norm of positive spectral differences
+- Adaptive thresholding based on recent history
+- Dual detection paths for fast and slow attacks
+
+**Harmonic Validation**
+- Analyzes first 5 harmonic partials in frequency spectrum
+- Weighted scoring (lower harmonics weighted more heavily)
+- Rejects noise, overtones, and octave errors
+- Ensures detected pitch matches expected harmonic structure
+
+**Pitch Stability**
+- Tracks recent pitch detections for consistency
+- Requires multiple consistent readings before committing to a note
+- Prevents octave errors during attack transients
+- Guitar range validation (rejects pitches below E2)
+
+**Technical Stack**
+- Web Audio API for real-time audio processing
+- FFT size: 4096 samples for better low-frequency resolution
 - Works with any audio interface or direct microphone input
+- No echoCancellation, noiseSuppression, or autoGainControl for accurate pitch detection
+
+**Debug Mode**
+- Press `Ctrl+Shift+D` or type `debugAudio()` in console to toggle
+- Real-time visualization of envelope, spectral flux, and pitch stability
+- State transition logging
+- Confidence metrics for YIN and harmonic analysis
 
 ### Fretboard Visualization
 
@@ -168,13 +217,18 @@ All progress data is stored in a single localStorage key called `fretlearner_sta
 - Ensure the correct input device is selected
 - Try increasing the input gain on your interface
 - Make sure your browser/Electron has microphone permissions
+- Enable debug mode (`Ctrl+Shift+D`) to see real-time detection data
+- For gentle playing, the system detects slow attacks - no need to strike hard
+
+### Wrong Notes Detected
+
+- Fast playing may detect lower octaves initially - pitch stabilizes after a few frames
+- Enable debug mode to see pitch stability tracking
+- Ensure clean note articulation without string noise
+- The system automatically rejects pitches outside guitar range
 
 ### Performance Issues
 
 - Close other applications using the microphone
 - Reduce the number of browser/Electron windows open
 - Ensure your system meets the minimum requirements
-
-## Credits
-
-Based on autocorrelation pitch detection algorithm inspired by various open-source implementations.
