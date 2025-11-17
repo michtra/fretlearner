@@ -23,11 +23,12 @@ class AudioDetector {
         this.YIN_THRESHOLD = 0.15; // Aperiodicity threshold (lower = stricter)
         this.MIN_FREQUENCY = 50;   // E1 (~82Hz), allow lower for detection
         this.MAX_FREQUENCY = 2000; // B6 (~1976Hz)
+        this.GUITAR_MIN_FREQUENCY = 82; // E2 - lowest note on standard guitar
 
         // Onset detection (Spectral Flux)
         this.previousSpectrum = null;
         this.spectralFlux = 0;
-        this.ONSET_THRESHOLD = 0.3;  // Threshold for attack detection
+        this.ONSET_THRESHOLD = 0.15;  // Lowered for slow attacks
         this.fluxHistory = [];
         this.FLUX_HISTORY_SIZE = 5;
 
@@ -36,9 +37,10 @@ class AudioDetector {
         this.envelope = 0;
         this.envelopeSmoothing = 0.3; // Exponential smoothing factor
         this.peakEnvelope = 0;
-        this.ATTACK_THRESHOLD = 0.02;  // Energy threshold to trigger attack
-        this.RELEASE_THRESHOLD = 0.01; // Energy threshold for release
-        this.SUSTAIN_RATIO = 0.7;      // Sustain is 70% of peak
+        this.ATTACK_THRESHOLD = 0.015;  // Lowered to detect gentle playing
+        this.RELEASE_THRESHOLD = 0.01;  // Energy threshold for release
+        this.SUSTAIN_RATIO = 0.7;       // Sustain is 70% of peak
+        this.SLOW_ATTACK_THRESHOLD = 0.025; // Alternative threshold for slow attacks
 
         // Note segmentation state
         this.currentNote = null;
@@ -47,6 +49,11 @@ class AudioDetector {
         this.MIN_NOTE_DURATION = 100; // Minimum note duration in ms
         this.framesSinceAttack = 0;
         this.framesSinceRelease = 0;
+
+        // Pitch stability tracking (prevents octave errors on fast attacks)
+        this.recentPitches = [];
+        this.PITCH_HISTORY_SIZE = 5;  // Track last 5 pitch detections
+        this.PITCH_STABILITY_THRESHOLD = 3; // Need 3 consistent readings
 
         // Hysteresis for state transitions (prevents rapid switching)
         this.ATTACK_HYSTERESIS_FRAMES = 3;
@@ -151,6 +158,7 @@ class AudioDetector {
         this.framesSinceAttack = 0;
         this.framesSinceRelease = 0;
         this.harmonicConfidence = 0;
+        this.recentPitches = [];
     }
 
     clearRecentNotes() {
@@ -252,6 +260,43 @@ class AudioDetector {
         return flux;
     }
 
+    getStablePitch() {
+        if (this.recentPitches.length < this.PITCH_STABILITY_THRESHOLD) {
+            return null; // Not enough data yet
+        }
+
+        // Convert pitches to MIDI notes for comparison (semitone resolution)
+        const midiNotes = this.recentPitches.map(freq =>
+            Math.round(69 + 12 * Math.log2(freq / 440))
+        );
+
+        // Find most common MIDI note
+        const counts = {};
+        let maxCount = 0;
+        let mostCommonMidi = null;
+
+        for (const midi of midiNotes) {
+            counts[midi] = (counts[midi] || 0) + 1;
+            if (counts[midi] > maxCount) {
+                maxCount = counts[midi];
+                mostCommonMidi = midi;
+            }
+        }
+
+        // Only return if we have stability
+        if (maxCount >= this.PITCH_STABILITY_THRESHOLD) {
+            // Return average of pitches that match the most common MIDI note
+            const matchingPitches = this.recentPitches.filter((freq, i) =>
+                midiNotes[i] === mostCommonMidi
+            );
+            const avgPitch = matchingPitches.reduce((a, b) => a + b, 0) / matchingPitches.length;
+
+            return avgPitch;
+        }
+
+        return null; // Not stable yet
+    }
+
     updateNoteState(detectedPitch, yinConfidence) {
         const prevState = this.noteState;
 
@@ -260,11 +305,26 @@ class AudioDetector {
             this.fluxHistory.reduce((a, b) => a + b, 0) / this.fluxHistory.length : 0;
         const adaptiveOnsetThreshold = Math.max(this.ONSET_THRESHOLD, avgFlux * 1.5);
 
+        // Track pitch history for stability
+        if (detectedPitch) {
+            this.recentPitches.push(detectedPitch);
+            if (this.recentPitches.length > this.PITCH_HISTORY_SIZE) {
+                this.recentPitches.shift();
+            }
+        }
+
         switch (this.noteState) {
             case 'SILENCE':
-                // Transition to ATTACK if we detect onset + sufficient energy
-                if (this.spectralFlux > adaptiveOnsetThreshold &&
-                    this.envelope > this.ATTACK_THRESHOLD) {
+                // Two paths to ATTACK:
+                // 1. Fast attack: High spectral flux + energy
+                // 2. Slow attack: Gradual energy increase
+
+                const isFastAttack = this.spectralFlux > adaptiveOnsetThreshold &&
+                                     this.envelope > this.ATTACK_THRESHOLD;
+                const isSlowAttack = this.envelope > this.SLOW_ATTACK_THRESHOLD &&
+                                     detectedPitch && this.harmonicConfidence > this.MIN_HARMONIC_CONFIDENCE;
+
+                if (isFastAttack || isSlowAttack) {
                     this.framesSinceAttack++;
 
                     if (this.framesSinceAttack >= this.ATTACK_HYSTERESIS_FRAMES) {
@@ -272,6 +332,11 @@ class AudioDetector {
                         this.peakEnvelope = this.envelope;
                         this.noteStartTime = Date.now();
                         this.framesSinceAttack = 0;
+                        this.recentPitches = []; // Reset pitch history on new attack
+
+                        if (this.debugMode) {
+                            console.log(`Attack type: ${isFastAttack ? 'FAST' : 'SLOW'}`);
+                        }
                     }
                 } else {
                     this.framesSinceAttack = 0;
@@ -289,29 +354,47 @@ class AudioDetector {
                     this.envelope > this.RELEASE_THRESHOLD) {
                     this.noteState = 'SUSTAIN';
 
-                    // Capture note at end of attack phase
-                    if (detectedPitch && this.harmonicConfidence > this.MIN_HARMONIC_CONFIDENCE) {
-                        const noteInfo = this.frequencyToNote(detectedPitch);
-                        this.currentNote = {
-                            ...noteInfo,
-                            confidence: yinConfidence,
-                            harmonicConfidence: this.harmonicConfidence
-                        };
+                    // Capture note using stable pitch (prevents octave errors)
+                    const stablePitch = this.getStablePitch();
+                    if (stablePitch && this.harmonicConfidence > this.MIN_HARMONIC_CONFIDENCE) {
+                        const noteInfo = this.frequencyToNote(stablePitch);
+
+                        // Octave error correction: reject if below guitar range
+                        if (noteInfo.frequency >= this.GUITAR_MIN_FREQUENCY) {
+                            this.currentNote = {
+                                ...noteInfo,
+                                confidence: yinConfidence,
+                                harmonicConfidence: this.harmonicConfidence
+                            };
+
+                            if (this.debugMode) {
+                                console.log(`Note captured: ${noteInfo.name}${noteInfo.octave} (${noteInfo.frequency.toFixed(2)} Hz)`);
+                            }
+                        } else {
+                            if (this.debugMode) {
+                                console.log(`Rejected octave error: ${noteInfo.frequency.toFixed(2)} Hz below guitar range`);
+                            }
+                        }
                     }
                 }
                 break;
 
             case 'SUSTAIN':
-                // Update note if we have better detection
-                if (detectedPitch && this.harmonicConfidence > this.MIN_HARMONIC_CONFIDENCE) {
-                    const noteInfo = this.frequencyToNote(detectedPitch);
-                    if (!this.currentNote ||
-                        Math.abs(detectedPitch - this.currentNote.frequency) < 20) {
-                        this.currentNote = {
-                            ...noteInfo,
-                            confidence: yinConfidence,
-                            harmonicConfidence: this.harmonicConfidence
-                        };
+                // Update note if we have better/stable detection
+                const stablePitchSustain = this.getStablePitch();
+                if (stablePitchSustain && this.harmonicConfidence > this.MIN_HARMONIC_CONFIDENCE) {
+                    const noteInfo = this.frequencyToNote(stablePitchSustain);
+
+                    // Only update if within guitar range and close to current note
+                    if (noteInfo.frequency >= this.GUITAR_MIN_FREQUENCY) {
+                        if (!this.currentNote ||
+                            Math.abs(stablePitchSustain - this.currentNote.frequency) < 30) {
+                            this.currentNote = {
+                                ...noteInfo,
+                                confidence: yinConfidence,
+                                harmonicConfidence: this.harmonicConfidence
+                            };
+                        }
                     }
                 }
 
@@ -610,6 +693,13 @@ class AudioDetector {
         console.log(`  Spectral Flux: ${state.spectralFlux}`);
         this.printBar('Flux', parseFloat(state.spectralFlux) * 100, 3);
 
+        console.log('%cPitch Stability:', 'font-weight: bold;');
+        console.log(`  Recent Pitches: ${this.recentPitches.length}/${this.PITCH_HISTORY_SIZE}`);
+        if (this.recentPitches.length > 0) {
+            const pitchRange = `${Math.min(...this.recentPitches).toFixed(1)} - ${Math.max(...this.recentPitches).toFixed(1)} Hz`;
+            console.log(`  Range: ${pitchRange}`);
+        }
+
         if (data.currentNote) {
             console.log('%cDetected Note:', 'font-weight: bold; color: #00ffff;');
             console.log(`  Note: ${data.currentNote.name}${data.currentNote.octave}`);
@@ -655,6 +745,11 @@ class AudioDetector {
                 spectralFlux: this.spectralFlux.toFixed(4),
                 fluxHistory: this.fluxHistory.map(f => f.toFixed(4)),
                 onsetThreshold: this.ONSET_THRESHOLD
+            },
+            pitchStability: {
+                recentPitches: this.recentPitches.map(f => f.toFixed(2)),
+                count: `${this.recentPitches.length}/${this.PITCH_HISTORY_SIZE}`,
+                stablePitch: this.getStablePitch()?.toFixed(2) || 'none'
             },
             note: this.currentNote ? {
                 name: `${this.currentNote.name}${this.currentNote.octave}`,
