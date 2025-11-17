@@ -334,10 +334,6 @@ class AudioDetector {
                         this.noteStartTime = Date.now();
                         this.framesSinceAttack = 0;
                         this.recentPitches = []; // Reset pitch history on new attack
-
-                        if (this.debugMode) {
-                            console.log(`Attack type: ${isFastAttack ? 'FAST' : 'SLOW'}`);
-                        }
                     }
                 } else {
                     this.framesSinceAttack = 0;
@@ -367,14 +363,6 @@ class AudioDetector {
                                 confidence: yinConfidence,
                                 harmonicConfidence: this.harmonicConfidence
                             };
-
-                            if (this.debugMode) {
-                                console.log(`Note captured: ${noteInfo.name}${noteInfo.octave} (${noteInfo.frequency.toFixed(2)} Hz)`);
-                            }
-                        } else {
-                            if (this.debugMode) {
-                                console.log(`Rejected octave error: ${noteInfo.frequency.toFixed(2)} Hz below guitar range`);
-                            }
                         }
                     }
                 }
