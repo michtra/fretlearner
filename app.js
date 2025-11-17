@@ -13,8 +13,9 @@ class Fretlearner {
         this.isTestingMode = false;
         this.lastKeyWasSharp = false;
         this.lastKeyWasFlat = false;
-        this.isInCooldown = false;
-        this.cooldownDuration = 1000; // Fixed 1 second between reps
+        this.isWaitingForSilence = false; // Wait for note to release before next note
+        this.waitingForSilenceTimeout = null;
+        this.releasePromptTimeout = null;
 
         // UI elements
         this.elements = {
@@ -129,8 +130,15 @@ class Fretlearner {
         testingControls.addEventListener('click', (e) => {
             if (e.target.classList.contains('btn-note')) {
                 const note = e.target.getAttribute('data-note');
-                console.log('Note button clicked:', note);
                 this.simulateNoteDetection(note);
+            }
+        });
+
+        // Debug mode shortcut (Ctrl+Shift+D)
+        document.addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.shiftKey && e.key === 'D') {
+                e.preventDefault();
+                this.toggleDebugMode();
             }
         });
 
@@ -179,8 +187,8 @@ class Fretlearner {
                 this.elements.detectedNote.textContent = `${noteInfo.name}${noteInfo.octave}`;
                 this.elements.frequencyDisplay.textContent = `${noteInfo.frequency.toFixed(2)} Hz`;
 
-                // Check if this matches our target (only when learning is active and not in cooldown)
-                if (this.isLearningActive && !this.isInCooldown && noteInfo.name !== this.lastDetectedNote) {
+                // Check if this matches our target (only when learning is active and not waiting for silence)
+                if (this.isLearningActive && !this.isWaitingForSilence && noteInfo.name !== this.lastDetectedNote) {
                     this.lastDetectedNote = noteInfo.name;
                     this.checkPlayedNote(noteInfo.name);
                 }
@@ -193,6 +201,26 @@ class Fretlearner {
 
         this.audioDetector.onVolumeChange = (volume) => {
             this.elements.volumeBar.style.width = volume + '%';
+        };
+
+        this.audioDetector.onSilenceDetected = () => {
+            // Only advance if we're waiting for silence AND no note is currently detected
+            if (this.isWaitingForSilence && this.lastDetectedNote === null) {
+                this.isWaitingForSilence = false;
+
+                // Clear any timeouts
+                if (this.waitingForSilenceTimeout) {
+                    clearTimeout(this.waitingForSilenceTimeout);
+                    this.waitingForSilenceTimeout = null;
+                }
+                if (this.releasePromptTimeout) {
+                    clearTimeout(this.releasePromptTimeout);
+                    this.releasePromptTimeout = null;
+                }
+
+                // Show next note
+                this.showCurrentNote();
+            }
         };
 
         // Learning engine callbacks
@@ -280,23 +308,18 @@ class Fretlearner {
     }
 
     startLearning() {
-        console.log('startLearning called, isAudioActive:', this.isAudioActive, 'isTestingMode:', this.isTestingMode);
-
         // Allow learning if audio is active OR testing mode is enabled
         if (!this.isAudioActive && !this.isTestingMode) {
-            console.log('Blocking: audio not active and testing mode not enabled');
             alert('Please start audio detection first or enable Testing Mode');
             return;
         }
 
-        console.log('Starting learning...');
         this.isLearningActive = true;
         this.elements.startLearningBtn.style.display = 'none';
         this.elements.pauseLearningBtn.style.display = 'block';
 
         this.showCurrentNote();
         this.updateUI();
-        console.log('Learning started, isLearningActive:', this.isLearningActive);
     }
 
     pauseLearning() {
@@ -310,7 +333,6 @@ class Fretlearner {
         if (!this.isLearningActive) return;
 
         const target = this.learningEngine.getCurrentTarget();
-        console.log('Showing current note:', target);
         this.elements.targetNote.textContent = target.note;
 
         // Reset colors back to default
@@ -324,17 +346,14 @@ class Fretlearner {
         }
         this.elements.targetString.textContent = stringInfo;
 
-        // Clear last detected note to allow the new target to be detected
-        // The audio detector cooldown prevents the previous note from being detected
+        // Reset detection state
         this.lastDetectedNote = null;
+        this.isWaitingForSilence = false;
 
         // Highlight on fretboard
         const fret = this.fretboard.getLowestFretForNote(target.note, target.string);
-        console.log('Fret for note', target.note, 'on string', target.string, ':', fret);
         if (fret !== null) {
             this.fretboard.highlight(target.note, target.string, fret);
-        } else {
-            console.warn('Could not find fret for note');
         }
 
         // Clear feedback
@@ -346,10 +365,10 @@ class Fretlearner {
         const isCorrect = this.learningEngine.checkNote(playedNote);
 
         if (isCorrect) {
-            // Enter cooldown mode
-            this.isInCooldown = true;
+            // Enter waiting for silence mode
+            this.isWaitingForSilence = true;
 
-            // Show "Good job!" message with larger styling
+            // Show success message
             this.elements.targetNote.textContent = '✓';
             this.elements.targetNote.style.color = 'var(--color-success)';
             this.elements.targetString.textContent = 'Good job!';
@@ -360,16 +379,36 @@ class Fretlearner {
             // Clear fretboard highlight
             this.fretboard.clearHighlight();
 
-            // Clear audio detector's recent notes to prevent lingering detection
-            if (this.audioDetector && this.audioDetector.clearRecentNotes) {
-                this.audioDetector.clearRecentNotes();
-            }
+            // After 2 seconds, show "Release the note..." if still waiting
+            this.releasePromptTimeout = setTimeout(() => {
+                if (this.isWaitingForSilence) {
+                    this.elements.targetString.textContent = 'Release the note...';
+                }
+            }, 2000);
 
-            // Wait for cooldown, then show next note
-            setTimeout(() => {
-                this.isInCooldown = false;
-                this.showCurrentNote();
-            }, this.cooldownDuration);
+            // In testing mode, auto-advance after delay
+            if (this.isTestingMode) {
+                this.waitingForSilenceTimeout = setTimeout(() => {
+                    this.isWaitingForSilence = false;
+                    if (this.releasePromptTimeout) {
+                        clearTimeout(this.releasePromptTimeout);
+                        this.releasePromptTimeout = null;
+                    }
+                    this.showCurrentNote();
+                }, 1500);
+            } else {
+                // For real audio mode: Set a safety timeout (max 5 seconds wait)
+                this.waitingForSilenceTimeout = setTimeout(() => {
+                    if (this.isWaitingForSilence) {
+                        this.isWaitingForSilence = false;
+                        if (this.releasePromptTimeout) {
+                            clearTimeout(this.releasePromptTimeout);
+                            this.releasePromptTimeout = null;
+                        }
+                        this.showCurrentNote();
+                    }
+                }, 5000);
+            }
         } else {
             this.showFeedback(`Try again (you played ${playedNote})`, 'incorrect');
         }
@@ -435,11 +474,9 @@ class Fretlearner {
     }
 
     toggleTestingMode(enabled) {
-        console.log('toggleTestingMode called with:', enabled);
         this.isTestingMode = enabled;
 
         if (enabled) {
-            console.log('Enabling testing mode');
             // Show testing controls
             this.elements.testingControls.style.display = 'block';
             // Enable learning without audio
@@ -447,9 +484,7 @@ class Fretlearner {
             // Hide audio indicator (we're not using real audio)
             this.elements.detectedNote.textContent = 'Testing Mode';
             this.elements.frequencyDisplay.textContent = 'Click buttons or use keyboard';
-            console.log('Testing mode enabled, startLearningBtn.disabled:', this.elements.startLearningBtn.disabled);
         } else {
-            console.log('Disabling testing mode');
             // Hide testing controls
             this.elements.testingControls.style.display = 'none';
             // Require audio to be active for learning
@@ -474,10 +509,7 @@ class Fretlearner {
     }
 
     simulateNoteDetection(note) {
-        console.log('simulateNoteDetection called with:', note, 'isLearningActive:', this.isLearningActive);
-
-        if (!this.isLearningActive || this.isInCooldown) {
-            console.log('Learning not active or in cooldown, ignoring note');
+        if (!this.isLearningActive || this.isWaitingForSilence) {
             return;
         }
 
@@ -492,13 +524,23 @@ class Fretlearner {
 
         // For testing mode, always check the note (no duplicate prevention)
         // In audio mode, duplicate prevention happens in audioDetector callback
-        console.log('Checking note:', note);
         this.checkPlayedNote(note);
 
         // Reset after a short delay so same note can be clicked again
         setTimeout(() => {
             this.lastDetectedNote = null;
         }, 500);
+    }
+
+    toggleDebugMode() {
+        if (!this.audioDetector.debugMode) {
+            this.audioDetector.enableConsoleDebug();
+            console.log('%cDEBUG MODE ENABLED (Ctrl+Shift+D to toggle)', 'color: #00ff00; font-weight: bold;');
+        } else {
+            this.audioDetector.setDebugMode(false);
+            this.audioDetector.onDebugData = null;
+            console.log('%cDEBUG MODE DISABLED', 'color: #ff0000; font-weight: bold;');
+        }
     }
 
     capitalizeFirst(str) {
@@ -509,4 +551,8 @@ class Fretlearner {
 // Initialize app when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
     window.app = new Fretlearner();
+
+    // Make debug functions available in console
+    window.debugAudio = () => window.app.toggleDebugMode();
+    console.log('Tip: Press Ctrl+Shift+D or type debugAudio() to toggle debug mode');
 });
