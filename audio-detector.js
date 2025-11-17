@@ -75,6 +75,7 @@ class AudioDetector {
         this.onNoteDetected = null;
         this.onVolumeChange = null;
         this.onDebugData = null; // New callback for debug information
+        this.onSilenceDetected = null; // Callback when note releases to silence
     }
 
     async getAudioDevices() {
@@ -418,8 +419,14 @@ class AudioDetector {
 
                     // Only clear note if it lasted long enough
                     if (noteDuration >= this.MIN_NOTE_DURATION) {
+                        const wasPlayingNote = this.currentNote !== null;
                         this.noteState = 'SILENCE';
                         this.currentNote = null;
+
+                        // Notify that we've reached silence (only if we had a note)
+                        if (wasPlayingNote && this.onSilenceDetected) {
+                            this.onSilenceDetected();
+                        }
                     }
                 }
 
@@ -773,6 +780,20 @@ class AudioDetector {
         console.clear();
         console.log('%cAUDIO DETECTOR DEBUG STATE', 'font-size: 14px; font-weight: bold; color: #00ffff;');
         console.table(this.getDebugState());
+    }
+
+    /**
+     * Check if audio input is currently silent
+     */
+    isSilent() {
+        return this.noteState === 'SILENCE' || this.envelope < this.RELEASE_THRESHOLD * 0.5;
+    }
+
+    /**
+     * Get current note state
+     */
+    getNoteState() {
+        return this.noteState;
     }
 }
 

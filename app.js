@@ -13,8 +13,8 @@ class Fretlearner {
         this.isTestingMode = false;
         this.lastKeyWasSharp = false;
         this.lastKeyWasFlat = false;
-        this.isInCooldown = false;
-        this.cooldownDuration = 1000; // Fixed 1 second between reps
+        this.isWaitingForSilence = false; // Wait for note to release before next note
+        this.waitingForSilenceTimeout = null;
 
         // UI elements
         this.elements = {
@@ -187,8 +187,8 @@ class Fretlearner {
                 this.elements.detectedNote.textContent = `${noteInfo.name}${noteInfo.octave}`;
                 this.elements.frequencyDisplay.textContent = `${noteInfo.frequency.toFixed(2)} Hz`;
 
-                // Check if this matches our target (only when learning is active and not in cooldown)
-                if (this.isLearningActive && !this.isInCooldown && noteInfo.name !== this.lastDetectedNote) {
+                // Check if this matches our target (only when learning is active and not waiting for silence)
+                if (this.isLearningActive && !this.isWaitingForSilence && noteInfo.name !== this.lastDetectedNote) {
                     this.lastDetectedNote = noteInfo.name;
                     this.checkPlayedNote(noteInfo.name);
                 }
@@ -201,6 +201,22 @@ class Fretlearner {
 
         this.audioDetector.onVolumeChange = (volume) => {
             this.elements.volumeBar.style.width = volume + '%';
+        };
+
+        this.audioDetector.onSilenceDetected = () => {
+            // Only advance if we're waiting for silence AND no note is currently detected
+            if (this.isWaitingForSilence && this.lastDetectedNote === null) {
+                this.isWaitingForSilence = false;
+
+                // Clear any timeout
+                if (this.waitingForSilenceTimeout) {
+                    clearTimeout(this.waitingForSilenceTimeout);
+                    this.waitingForSilenceTimeout = null;
+                }
+
+                // Show next note
+                this.showCurrentNote();
+            }
         };
 
         // Learning engine callbacks
@@ -332,9 +348,9 @@ class Fretlearner {
         }
         this.elements.targetString.textContent = stringInfo;
 
-        // Clear last detected note to allow the new target to be detected
-        // The audio detector cooldown prevents the previous note from being detected
+        // Reset detection state
         this.lastDetectedNote = null;
+        this.isWaitingForSilence = false;
 
         // Highlight on fretboard
         const fret = this.fretboard.getLowestFretForNote(target.note, target.string);
@@ -354,13 +370,13 @@ class Fretlearner {
         const isCorrect = this.learningEngine.checkNote(playedNote);
 
         if (isCorrect) {
-            // Enter cooldown mode
-            this.isInCooldown = true;
+            // Enter waiting for silence mode
+            this.isWaitingForSilence = true;
 
             // Show "Good job!" message with larger styling
             this.elements.targetNote.textContent = '✓';
             this.elements.targetNote.style.color = 'var(--color-success)';
-            this.elements.targetString.textContent = 'Good job!';
+            this.elements.targetString.textContent = 'Release the note...';
             this.elements.targetString.style.color = 'var(--color-success)';
             this.elements.feedbackMessage.textContent = '';
             this.elements.feedbackMessage.className = 'feedback-message';
@@ -368,16 +384,22 @@ class Fretlearner {
             // Clear fretboard highlight
             this.fretboard.clearHighlight();
 
-            // Clear audio detector's recent notes to prevent lingering detection
-            if (this.audioDetector && this.audioDetector.clearRecentNotes) {
-                this.audioDetector.clearRecentNotes();
+            // In testing mode, auto-advance after delay
+            if (this.isTestingMode) {
+                this.waitingForSilenceTimeout = setTimeout(() => {
+                    this.isWaitingForSilence = false;
+                    this.showCurrentNote();
+                }, 800);
+            } else {
+                // For real audio mode: Set a safety timeout (max 5 seconds wait)
+                this.waitingForSilenceTimeout = setTimeout(() => {
+                    if (this.isWaitingForSilence) {
+                        console.log('Silence timeout - forcing advance');
+                        this.isWaitingForSilence = false;
+                        this.showCurrentNote();
+                    }
+                }, 5000);
             }
-
-            // Wait for cooldown, then show next note
-            setTimeout(() => {
-                this.isInCooldown = false;
-                this.showCurrentNote();
-            }, this.cooldownDuration);
         } else {
             this.showFeedback(`Try again (you played ${playedNote})`, 'incorrect');
         }
